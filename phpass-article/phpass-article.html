@@ -1,0 +1,1606 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=us-ascii">
+<title>How to manage a PHP application's users and passwords</title>
+<style type="text/css">
+pre { border: 1px dashed #ccc; padding: 4px; margin: 4px; }
+</style>
+</head>
+<body>
+<h1 align="center">How to manage a PHP application's users and passwords</h1>
+<p align="center"><small>
+Alexander Peslyak<br>
+Founder and CTO<br>
+Openwall, Inc.<br>
+<br style="line-height: 0.5">
+<i>better known as</i><br>
+<br style="line-height: 0.5">
+<a href="http://openwall.info/wiki/people/solar">Solar Designer</a><br>
+<a href="http://www.openwall.com">Openwall Project</a> leader<br>
+<br>
+April 2010<br>
+Last revised: August 2010
+<br style="line-height: 0.5">
+<a href="#license">Some rights reserved</a>
+</small>
+<h2>Introduction</h2>
+<p>
+Almost all large PHP applications, as well as many small ones, have a notion of
+user accounts, and, whether we like it or not, they typically use passwords (or
+at best <i>passphrases</i>) to authenticate the users.
+How do they store the passwords (to authenticate against)?
+Reasonable applications don't.
+Instead, they store <i>password hashes</i>.
+There have been many short articles, blog posts, even book chapters that
+try/claim to show you how to properly compute and use password hashes.
+Older ones will tell you to use the <i>md5()</i> function.
+Newer ones will tell you to use <i>sha1()</i> or <i>hash()</i> (SHA-256, etc.),
+add <i>salting</i>
+(but "forget" to add <i>stretching</i>, which is equally important),
+and use <i>mysql_real_escape_string()</i> on the username.
+Unfortunately, while <i>some</i> of these recommendations are steps in the
+right direction (although not all are),
+none of the articles on password security in PHP that I saw were "quite it".
+<p>
+Finally, some of the more recent blog posts, forum comments, and the like have
+started to recommend <a href="http://www.openwall.com/phpass/">phpass</a>, the
+password/passphrase hashing framework for PHP that I wrote, and which has
+already been integrated into many popular "web applications" including phpBB3,
+WordPress, and Drupal 7.
+Obviously, I fully agree with this recommendation.
+However, I was not aware of an existing step-by-step guide on integrating
+<i>phpass</i> into a PHP application, and
+password security is not only about password hashing anyway.
+<p>
+In this article/tutorial, I will guide you through the steps needed to
+introduce proper (in my opinion at least) user/password management into a new
+PHP application.
+I will start by briefly explaining
+<a href="#password-hashing">password/passphrase hashing</a> and
+<a href="#database-safety">how to access the database safely</a>.
+Then we will proceed through several revisions of the
+<a href="#sample-program">sample program</a>.
+We'll start with a very simple PHP program capable of
+<a href="#creating-new-users">creating new users</a>
+only and having some subtle issues.
+We will gradually improve this program adding functionality
+(<a href="#authenticating-users">logging in</a> to existing user accounts,
+<a href="#changing-user-passwords">changing user passwords</a>, and
+<a href="#enforcing-password-policy">enforcing a password policy</a>)
+and "discovering" and dealing with the issues.
+<p>
+We will also briefly touch many related topics.
+<b>Sub-headings have been chosen such that you may skip or skim over the topics
+you <i>think</i> you're already familiar with... or better read those sections
+anyway.</b>
+Let's get started.
+<a name="password-hashing"></a>
+<h2>Password/passphrase hashing</h2>
+<p>
+Decent systems/applications do not actually store users' passwords.
+Instead, they transform new passwords being set/changed into
+<i>password hashes</i> with
+<a href="http://en.wikipedia.org/wiki/Cryptographic_hash_function">
+cryptographic (one-way) hash functions</a>, and they store those hashes.
+They should preferably use hash functions intended for <i>password</i> hashing.
+Direct/naive use of other cryptographic hash functions, such as PHP's
+<i>md5()</i>, <i>sha1()</i>, or <i>hash('sha256', ...)</i> for that matter,
+has dire consequences.
+<p>
+When a user authenticates to the application with a username and a
+previously-set password, the application looks up some auxiliary information
+(such as the hash type, the salt, and the iteration count - all of which are
+described below)
+for the provided username, transforms the provided password into its hash,
+and compares this hash against the one stored for the user.
+If the two hashes match, authentication succeeds (otherwise it fails).
+<p>
+<i>- "Why bother with password hashing when I use (or don't use) SSL
+(https URLs) anyway?"</i><br>
+<small>
+(Surprisingly, this question is <i>really</i> being asked both ways.
+More often, people would make an incorrect statement that you don't need
+password hashing, or don't need to do it right, because you do or because you
+don't use SSL.)<br>
+</small>
+- Password hashing, if done right, reduces the
+<b>risk <i>impact</i> of having the hashes stolen or leaked</b> -
+an attacker will recover fewer plaintext passwords from the hashes.
+<small>
+Also, the cost of recovery from an incident like this may be reduced -
+rather than change all passwords at once, which may be costly or prohibitive to
+do, a system's administrator may audit the password hashes with a tool such as
+<a href="http://www.openwall.com/john/">John the Ripper</a> and only have the
+weak passwords changed.
+With proper password hashing and password policy enforcement in place, the
+majority of the passwords could be considered "strong enough" and would not
+need to be changed immediately even after a known and otherwise-resolved
+security compromise.
+</small>
+The use of SSL mitigates the
+<b>risk of having some plaintext passwords captured while in transit</b>.
+Clearly, these risks are different.
+An attacker capable of capturing some of the network traffic is not necessarily
+capable of getting a copy of the database, and vice versa.
+Thus, it makes perfect sense to use one of these countermeasures -
+password hashing and SSL - without the other (which does not
+address "the other" risk then),
+and it also makes sense to use both of them together.
+<a name="salting"></a>
+<h3>Salting</h3>
+<p>
+<a href="http://en.wikipedia.org/wiki/Salt_(cryptography)">Salts</a>
+are likely-unique values that are entered into a password hashing method
+along with the password, which results in the same password hashing into
+completely different hash values given different salts.
+Proper use of salts may defeat a number of attacks, including:
+<p>
+<ul>
+<li>Ability to try candidate passwords against multiple hashes at the price of one
+<li>Use of pre-hashed lists (or the smarter "rainbow tables") of candidate passwords
+<li>Ability to determine whether two users (or two accounts of one user) have the same or different passwords without actually having to guess one of the passwords
+</ul>
+<p>
+Salts are normally stored along with the hashes.
+They are not secret.
+<a name="stretching"></a>
+<h3>Stretching</h3>
+<p>
+Offline password cracking (given stolen or leaked password hashes) involves
+computing hashes of large numbers of candidate passwords.
+Thus, in order to slow those attacks down, the computational complexity of a
+good password hashing method must be high - but of course not too high as to
+render it impractical.
+<p>
+Typical cryptographic hash functions not intended for password hashing were
+designed for speed.
+If these are directly misused for password hashing, then offline password
+cracking attacks may run at speeds of many million of candidate passwords per
+second.
+<p>
+These cryptographic hash functions (or even block ciphers) - let's call them
+"cryptographic primitives" - may be used as building blocks to construct a
+decent password hashing method, which would use thousands or millions of
+iterations of the underlying cryptographic primitive.
+This is called
+<a href="http://en.wikipedia.org/wiki/Key_strengthening">
+password (or key) stretching (or strengthening)</a>.
+Preferably, the number of iterations should not be hard-coded, but rather it
+should be configurable by an administrator for use when a new password is set
+(hashed), and it should be getting saved along with the hash (to allow the
+administrator to change the iteration count for newly set/changed passwords,
+yet not break support for previously-generated password hashes).
+<p>
+<i>- "My web application must be fast.
+I can't afford to use a slow hash function!"</i><br>
+- Actually, you can.
+No one said it should be taking an entire second to compute a password hash.
+Is 10 milliseconds fast enough for you?
+Perhaps it is, but if not you can make it 1 ms or less
+<small>
+(which is likely way below other per-request "overhead" that your application
+incurs anyway)
+</small>
+and still benefit from password stretching a lot.
+Please note that without any stretching a cryptographic primitive could be
+taking as little as some microseconds or even nanoseconds to compute
+<small>
+(at least during an offline attack, which would use an optimal implementation)
+</small>.
+If you go from one microsecond to one millisecond, which is clearly affordable,
+you make offline attacks (against stolen or leaked hashes) run 1000 times
+slower, or you effectively stretch your users' passwords or passphrases by
+about 10 bits of
+<a href="http://en.wikipedia.org/wiki/Entropy_(information_theory)">entropy</a>
+each.
+That's significant - it is roughly equivalent to each passphrase containing one
+additional word, without actually adding that extra word and having the users
+memorize it.
+Besides, the password hash is typically only computed when a user logs in
+<small>(or when a new user is registered or a password is changed)</small>,
+which occurs relatively infrequently (compared to the frequency of other
+requests).
+Subsequent requests by the logged in user will use a session ID instead.
+<h3>Choice of the underlying cryptographic primitive</h3>
+<p>
+The choice of the underlying cryptographic primitive - such as MD5, SHA-1,
+SHA-256, or even Blowfish or DES (which are block ciphers, yet they may be used
+to construct one-way hashes) - does not matter all that much.
+<b>It's the higher-level password hashing method,
+employing salting and stretching, that makes a difference.</b>
+<p>
+<i>- "I heard that MD5 has been "broken".
+Shouldn't we use SHA-1 instead?"</i><br>
+- It is true that MD5 has been broken as it relates to certain attacks
+(practical).
+SHA-1 has also been broken in certain other ways (mostly theoretical).
+However, neither break has anything to do with the uses of these functions for
+password hashing, especially not as building blocks in a higher-level hashing
+method.
+Thus, any possible reasons to move off MD5 or SHA-1 as underlying cryptographic
+primitives for password hashing "because of the break" are purely "political"
+rather than technical.
+<small>
+(It may be easier to just phase out MD5 and SHA-1 rather than differentiate
+their affected vs. unaffected uses.)
+</small>
+<h3><i>phpass</i> - the password/passphrase hashing framework for PHP applications</h3>
+<p>
+<a href="http://www.openwall.com/phpass/">phpass</a>
+provides an easy to use abstraction layer on top of PHP's cryptographic hash
+functions suitable for password hashing.
+As of this writing, it supports three password hashing methods, including two
+via PHP's crypt() function - these are known in PHP as
+<a href="http://www.openwall.com/crypt/">CRYPT_BLOWFISH</a> and
+CRYPT_EXT_DES - and one implemented in <i>phpass</i> itself on top of MD5.
+All three employ salting, stretching, and variable iteration counts
+(configurable by an administrator, encoded/stored along with the hashes).
+<p>
+<b>PHP 5.3.0 and above is <i>guaranteed</i> to support all three of these
+hashing methods</b> due to code included into the PHP interpreter itself.
+Specific builds/installs of older versions of PHP may or may not support the
+CRYPT_BLOWFISH and CRYPT_EXT_DES methods - this is system-specific.
+For example, the
+<a href="http://www.hardened-php.net/suhosin/">
+Suhosin PHP security hardening patch</a>,
+included into many distributions' packages of PHP, has been adding support for
+CRYPT_BLOWFISH for years, many operating systems - such as *BSD's, Solaris 10,
+SUSE Linux, ALT Linux, and indeed
+<a href="http://www.openwall.com/Owl/">Openwall GNU/*/Linux</a> -
+are also providing support for
+CRYPT_BLOWFISH via the system libraries (which PHP uses), and some operating
+systems - *BSD's, Openwall GNU/*/Linux - also provide support for CRYPT_EXT_DES.
+<p>
+The <b>MD5-based salted and stretched hashing implemented in <i>phpass</i>
+itself is supported on all systems - starting with the ancient PHP 3</b>.
+<i>phpass</i> provides a way for you
+(the application developer or administrator) to force the use of these
+"portable" hashes - this is a Boolean parameter to the <i>PasswordHash</i>
+constructor function.
+<p>
+Unless you force the use of "portable" hashes, <i>phpass</i>' preferred
+hashing method is CRYPT_BLOWFISH, with a fallback to CRYPT_EXT_DES, and then a
+final fallback to the "portable" hashes.
+CRYPT_BLOWFISH and CRYPT_EXT_DES are preferred primarily for the efficiency of
+the underlying implementations (in C and on some systems in assembly),
+compared to <i>phpass</i>' own code around MD5 (in PHP, even though the
+underlying MD5 code is in C).
+This greater code efficiency allows for more extensive and thus more effective
+use of password stretching (higher iteration counts).
+<small>
+(It is assumed that an attacker would have a near-optimal implementation of any
+of these hashing methods anyway.)
+</small>
+<p>
+Besides the actual hashing,
+<b><i>phpass</i> transparently generates random salts</b> when a new password
+or passphrase is hashed, and it
+<b>encodes the hash type, the salt, and the password stretching
+iteration count into the "hash encoding string"</b> that it returns.
+When <i>phpass</i> authenticates a password or passphrase against a stored
+hash, it similarly <b>transparently extracts and uses the hash type identifier,
+the salt, and the iteration count</b> out of the "hash encoding string".
+Thus, <b>you do not need to bother with salting and stretching on your own -
+<i>phpass</i> takes care of these for you</b>.
+<a name="phpass-randomness"></a>
+<p>
+<i>- "What source of randomness does phpass use?
+Does it work <b>on Windows</b>?"</i><br>
+- You might have noticed that <i>phpass</i> uses <i>/dev/urandom</i>, which is
+a decent supply of randomness on modern Unix-like systems.
+However, <i>phpass</i> will transparently fallback to its own pseudo-random
+byte stream generator
+<small>
+(which is based primarily on multiple measurements of the
+current time with up to microsecond precision)
+</small>
+when <i>/dev/urandom</i> is unavailable or when it fails.
+Thus, yes, <b><i>phpass</i> works on Windows</b> (as well as on Unix-like
+systems indeed),
+<p>
+Naturally, <b>we'll use <i>phpass</i></b> for our sample program.
+<a name="database-safety"></a>
+<h2>The database (and how to access it safely)</h2>
+<h3>SQL injections</h3>
+<h4>What SQL injections are</h4>
+<p>
+In many cases,
+we will need to pass pieces of untrusted user input into SQL queries.
+Even with our trivial database and the initial revision of our user
+management program (which we'll create soon), there will be untrusted user
+input: the username and password (or passphrase), at least before we've
+verified them.
+If we blindly embed the target username string obtained via a website form into
+an SQL query string, we might alter the SQL query.
+Since the username is under a potential attacker's control, the attacker may be
+able to alter our SQL query in a way such that another valid SQL query of the
+attacker's choice is formed.
+This may allow not only to circumvent our program's intended behavior (e.g.,
+have it change another user's password with that altered query), but also to
+mount all sorts of attacks on the SQL server, as well as on our program (such
+as via query results that would suddenly become fully untrusted input as well).
+<h4>How to deal with SQL injections</h4>
+<p>
+<i>"- Can't we just enclose the user inputs in single quotes when embedding them
+in an SQL query string?
+Wouldn't that do the trick?"</i><br>
+- No.
+One of the input values can simply close the quotes, braces, etc., do its dirty
+deed, then provide additional SQL statements (or whatever) to make the rest of
+the original query "complete" (avoiding a syntax error).
+Thus, this naive approach <i>alone</i> does not work at all.
+<p>
+There are several real ways to combat SQL injections,
+of varying effectiveness and with different pros and cons.
+Most of these can be used together for greater assurance.
+<p>
+<ul>
+<li><b>Filtering</b> -
+sanitize the input values rejecting or modifying "bad" ones
+(preferably using a whitelist of known-safe input values rather than a
+blacklist of known-unsafe ones)
+<li><b>Escaping</b> -
+prefix any special characters (most notably the single quote character)
+with an escape character
+(preferably using the API functions specific to the target SQL server type)
+<li><b>Encoding</b> -
+turn any input strings into other strings consisting of safe characters only -
+e.g., an application may introduce '%' as its own escape character, then
+<a href="http://en.wikipedia.org/wiki/Percent-encoding">URL-encode</a>
+all characters not from a known-safe set
+<small>
+(the '%' character has a special meaning in certain contexts, though, so you
+might choose another or you might only use this technique along with escaping)
+</small>
+<li><b>Prepared statements</b> -
+rather than form SQL query strings with inputs embedded into them (in one way
+or another), an application may use advanced APIs to pass SQL queries with
+placeholders to the SQL server and then pass the input values to the SQL server
+"separately"
+</ul>
+<p>
+In the sample program that we'll be writing during the rest of this article,
+we'll use <b>filtering</b> (the "rejection" kind of it) and
+<b>prepared statements</b> in such a way that if any one of these techniques
+fails to provide its security, the application will nevertheless remain secure.
+<h4>Prepared statements with PHP and MySQL</h4>
+<p>
+As of this writing, PHP offers three main interfaces to MySQL:
+<i>PHP's MySQL Extension</i>
+(obsolete, not recommended for new projects - but still widely used),
+<i>PHP's mysqli (MySQL Improved) Extension</i>
+("preferred" for new projects), and
+<i>PHP Data Objects (PDO)</i>
+(recommended, but not "preferred" for new projects).
+The last two of these support prepared statements.
+Both require PHP 5+.
+<b>We'll use <i>mysqli</i>.</b>
+<p>
+The separation of code and data achieved with the <i>mysqli</i> PHP extension,
+the underlying MySQL APIs that it uses, and the (relatively) new MySQL protocol
+revision can't be perfect -
+everything is sent over the same socket connection anyway -
+but it does appear to be way better (simpler, and hence less error-prone) than
+what could be achieved by escaping.
+Specifically, in the MySQL binary protocol, the input values are preceded by
+binary representations of their lengths in bytes and then are sent verbatim.
+<p>
+<b>Beware</b>:
+<a href="http://ilia.ws/archives/103-mysql_real_escape_string-versus-Prepared-Statements.html">
+apparently, certain interfaces and older/transitional software
+versions emulate prepared statements on the client end, which makes them
+susceptible to the risks typical for SQL escaping</a>.
+This is one of the reasons why we choose not to rely on prepared statements
+<i>alone</i> for security against SQL injections.
+<h3>Employ the <a href="http://en.wikipedia.org/wiki/Principle_of_least_privilege">principle of least privilege</a></h3>
+<p>
+Besides <i>avoiding</i> SQL injections,
+it makes sense to <i>mitigate</i> any that would potentially occur anyway,
+as well as possibly some other attacks carried out against or via the database.
+To this end, it is a good idea to have your PHP application use an SQL server
+account with the minimum privileges required -
+not an administrative account and
+not an account that can also access another database.
+<p>
+This also helps in case your PHP application is somehow fully compromised, such
+that the attacker gains direct access to the database with the application's
+access privileges, yet you care not to let this compromise directly "propagate"
+onto other databases that your application does not use.
+<h3>Schema</h3>
+<p>
+For our sample program,
+<b>we'll start with just one table in a brand new MySQL database</b>.
+Connect to the MySQL server
+<small>(such as with the command-line <i>mysql</i> client program)</small>
+and issue the following:
+<p>
+<pre>
+create database myapp;
+use myapp;
+create table users (user varchar(60), pass varchar(60));
+</pre>
+<small>
+(We will need to revise this a little bit to deal with an issue that we'll
+"discover" further down this article.)
+</small>
+<p>
+The <i>user</i> column will hold usernames,
+and the <i>pass</i> column will hold password hashes.
+Currently, <i>phpass</i> produces hash encoding strings that are at most
+60 characters long.
+<a name="sample-program"></a>
+<h2>The sample program is born</h2>
+<p>
+The code snippets included in this article generally assume that you're
+familiar with creating HTML web pages and PHP scripts.
+Thus, any opening and closing tags
+(such as <i>&lt;html&gt;</i> and <i>&lt;?php</i>), etc.
+are omitted from here, to keep the article from growing too long.
+However, the sample files in the archive provided with the article do include
+all of those essential bits.
+<a name="creating-new-users"></a>
+<h3>How to create new users</h3>
+<p>
+First, we need to put the <i>phpass</i> code in place.
+(We will use it to hash the new password.)
+We place the <i>PasswordHash.php</i> file from the
+<a href="http://www.openwall.com/phpass/">phpass distribution tarball</a>
+somewhere within our web "virtual host" "document root" directory
+and we set proper permissions for the file to be loaded by the web server's
+PHP setup
+<small>(typically, the Unix permission bits will need to be 600 or 644
+depending on web server setup)</small>.
+<p>
+Then we create a subdirectory for our sample program (this is how multiple
+revisions of the program are included in the archive accompanying this article -
+in separate subdirectories).
+Let's call the directory <i>demo</i>
+<small>(and set its Unix permissions to 711)</small>.
+We'll place two files into this directory: <i>user-man.html</i>
+<small>(with permissions set to 644)</small>
+containing the HTML form below, and <i>user-man.php</i>
+<small>(with permissions set the same as we did for
+<i>PasswordHash.php</i>)</small>.
+<p>
+Let's place the following HTML form into <i>user-man.html</i>:
+<pre>
+&lt;form action="user-man.php" method="POST"&gt;
+Username:&lt;br&gt;
+&lt;input type="text" name="user" size="60"&gt;&lt;br&gt;
+Password:&lt;br&gt;
+&lt;input type="password" name="pass" size="60"&gt;&lt;br&gt;
+&lt;input type="submit" value="Create user"&gt;
+&lt;/form&gt;
+</pre>
+<p>
+This form asks for and submits a username and a password to the
+<i>user-man.php</i> script.
+Let's start writing it.
+First, let's include the <i>phpass</i> code:
+<pre>
+require '../PasswordHash.php';
+</pre>
+<p>
+To actually use <i>phpass</i>, we need to decide on and specify the extent of
+password stretching and whether we want to force the use of "portable" hashes
+or not <small>(both of these matters were briefly discussed above)</small>.
+Let's place those constants into PHP variables:
+<pre>
+// Base-2 logarithm of the iteration count used for password stretching
+$hash_cost_log2 = 8;
+// Do we require the hashes to be portable to older systems (less secure)?
+$hash_portable = FALSE;
+</pre>
+(<small>In a real application, these should be in a configuration file included
+from the actual program code files instead.
+Alternatively, they may be configurable via the application itself, by an
+administrative user.</small>)
+<p>
+To obtain the submitted username and password, let's initially use:
+<pre>
+$user = $_POST['user'];
+// Should validate the username length and syntax here
+$pass = $_POST['pass'];
+</pre>
+(<small>This is a bit problematic.
+We will revise it soon.</small>)
+<p>
+Now we can hash the password with:
+<p>
+<pre>
+$hasher = new PasswordHash($hash_cost_log2, $hash_portable);
+$hash = $hasher-&gt;HashPassword($pass);
+if (strlen($hash) &lt; 20)
+	fail('Failed to hash new password');
+unset($hasher);
+</pre>
+<p>
+This uses the fact that the shortest valid password hash encoding string that
+<i>phpass</i> can currently return is 20 characters long
+<small>
+(this is the case for CRYPT_EXT_DES, whereas other hash types use even longer
+encoding strings)</small>.
+<i>fail()</i> is a custom function that we'll use in our sample program.
+Let's define it (earlier in the code) as follows:
+<pre>
+function fail($pub, $pvt = '')
+{
+	$msg = $pub;
+	if ($pvt !== '')
+		$msg .= ": $pvt";
+	exit("An error occurred ($msg).\n");
+}
+</pre>
+(<small>This function as defined above is a bit problematic.
+We will revise it soon.</small>)
+<p>
+Note that we don't bother producing proper HTML output in <i>fail()</i>.
+For our sample program, it is simpler to produce plain text output.
+Let's set the HTTP header accordingly such that the web browser does not
+attempt to parse our script's output as HTML:
+<pre>
+header('Content-Type: text/plain');
+</pre>
+<p>
+Indeed, we need to do this before our script possibly produces any output.
+<small>
+(In a real PHP application, you would likely be producing HTML output instead,
+which requires more code and extra safety measures.)
+</small>
+<p>
+Let's also place our database access credentials into PHP variables.
+For example:
+<pre>
+// In a real application, these should be in a config file instead
+$db_host = '127.0.0.1';
+$db_port = 3306;
+$db_user = 'mydbuser';
+$db_pass = 'voulDyu0gue$s?';
+$db_name = 'myapp';
+</pre>
+<p>
+Let's connect to the database using <i>mysqli</i>, and let's not forget to
+check for a possible failure:
+<p>
+<pre>
+$db = new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+if (mysqli_connect_errno())
+	fail('MySQL connect', mysqli_connect_error());
+</pre>
+<p>
+Finally, let's try to create the user by inserting the username and the
+password hash encoding string <small>(which includes the salt, etc.)</small>
+into the database table using the prepared statements API:
+<p>
+<pre>
+($stmt = $db-&gt;prepare('insert into users (user, pass) values (?, ?)'))
+	|| fail('MySQL prepare', $db-&gt;error);
+$stmt-&gt;bind_param('ss', $user, $hash)
+	|| fail('MySQL bind_param', $db-&gt;error);
+$stmt-&gt;execute()
+	|| fail('MySQL execute', $db-&gt;error);
+</pre>
+<p>
+If we got this far, we must have successfully created the user.
+Let's close the database connection:
+<p>
+<pre>
+$stmt->close();
+$db->close();
+</pre>
+<p>
+In fact, it would be nice to do this on failure as well, but that would make
+the code more complicated
+(the cleanups to perform would vary depending on where the failure occurs).
+Instead, we rely on the web server setup to perform any cleanups for
+terminating PHP scripts, which it needs to do anyway because scripts may
+sometimes terminate abnormally.
+<p>
+So that's it.
+Please find the HTML file and the demo program we've just created,
+complete with all details and with the snippets in the proper order
+(unlike in this article),
+in the <b><i>demo1</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<p>
+Let's test the program.
+Go to the URL for the <i>user-man.html</i> HTML page in a web browser,
+enter <i>myuser</i> for the username and <i>mypass</i> for the password.
+If the script completes without error, we should be able to see the new user
+account in the <i>users</i> table:
+<p>
+<pre>
+mysql&gt; select * from users;
++--------+--------------------------------------------------------------+
+| user   | pass                                                         |
++--------+--------------------------------------------------------------+
+| myuser | $2a$08$Lg5XF1Tt.X5TGyfb43vBBeEFZm4GTXQhKQ6SY6emkcnhAGT8KfxFS |
++--------+--------------------------------------------------------------+
+1 row in set (0.00 sec)
+</pre>
+<p>
+The password hash will look almost completely different, though, due to the
+random salt and due to the hash possibly being of a different type
+<small>(if you're using PHP older than 5.3.0 <i>and</i> your build of PHP does
+not include the Suhosin patch <i>and</i> your operating system does not provide
+native support for CRYPT_BLOWFISH hashes... <i>or</i> if you edited the code to
+set $hash_portable to TRUE).</small>
+<h3>What if the user already exists?</h3>
+<p>
+Let's try to create the same user, with the same username, once again.
+Also enter the same password, just for kicks.
+The script succeeds again, and we get:
+<p>
+<pre>
+mysql&gt; select * from users;
++--------+--------------------------------------------------------------+
+| user   | pass                                                         |
++--------+--------------------------------------------------------------+
+| myuser | $2a$08$Lg5XF1Tt.X5TGyfb43vBBeEFZm4GTXQhKQ6SY6emkcnhAGT8KfxFS |
+| myuser | $2a$08$7lM07FwQMm5/C8G/urT4z..MudfsS227e8oUEu6T51bNWk/RG//qe |
++--------+--------------------------------------------------------------+
+2 rows in set (0.00 sec)
+</pre>
+<p>
+We get a duplicate user record.
+We'll need to address this shortcoming.
+Meanwhile, notice how the hash encoding string is indeed almost entirely
+different, as explained above, even though the same password was supplied.
+<p>
+We could issue a SELECT query to see if the username is already taken before
+trying to create the user.
+However, this would involve a
+<a href="http://en.wikipedia.org/wiki/Race_condition">race condition</a>:
+a simultaneous request to our script could create a user of that name after our
+SELECT query but before we do the INSERT.
+Then we would end up creating a duplicate user record anyway.
+<p>
+To deal with this, we need to revise our database schema such that the MySQL
+server would not permit duplicate usernames:
+<p>
+<pre>
+drop table users;
+create table users (user varchar(60), pass varchar(60), unique (user));
+</pre>
+<p>
+Now let's repeat the experiment: create the same user twice via our web form.
+On our second attempt to create the user, the script fails with:
+<p>
+<pre>
+An error occurred (MySQL execute: Duplicate entry 'myuser' for key 1).
+</pre>
+<p>
+Checking the table contents, we see that only one instance of the user was
+created - just like we wanted.
+The message printed on an attempt to create a duplicate user is technical,
+though - not one suitable for an end user.
+We'll deal with this a bit later.
+Meanwhile, let's focus on another aspect of it.
+<h3>Avoid leaking server setup details</h3>
+<p>
+A portion of the error message above was produced by MySQL.
+On another occasion, it could possibly produce a message leaking the details of
+your setup - such as the database name, the database server address, and/or a
+full pathname to a database table file.
+We could want to avoid displaying this information to the user, unless we're
+"the user" and we're debugging.
+Also, those error messages may happen to contain characters that would need to
+be quoted if we were producing HTML output.
+Let's modify the <i>fail()</i> function to support a non-debugging mode where
+it would not reveal the potentially-sensitive messages.
+Also, let's add a comment about the "HTML issue", such that it is hopefully not
+overlooked if this code is actually made to produce HTML output later.
+<p>
+<pre>
+// Are we debugging this code?  If enabled, OK to leak server setup details.
+$debug = TRUE;
+
+function fail($pub, $pvt = '')
+{
+	global $debug;
+	$msg = $pub;
+	if ($debug &amp;&amp; $pvt !== '')
+		$msg .= ": $pvt";
+/* The $pvt debugging messages may contain characters that would need to be
+ * quoted if we were producing HTML output, like we would be in a real app,
+ * but we're using text/plain here.  Also, $debug is meant to be disabled on
+ * a "production install" to avoid leaking server setup details. */
+	exit("An error occurred ($msg).\n");
+}
+</pre>
+<p>
+Please note that similar potential leaks of server setup details typically
+exist in the default settings of Apache and PHP.
+As an application developer, our responsibility here is to provide a way to
+avoid those leaks - which we did by introducing the <i>$debug</i> setting.
+It is up to a server administrator (or someone installing our PHP application
+on a server) to decide on and configure those settings in a certain way.
+It is a good idea to document the issue and the settings prominently.
+Also, it may be desirable to use safe defaults - that is, have <i>$debug</i>
+default to <i>FALSE</i> in our case.
+However, for our sample program we'll continue with a default of <i>TRUE</i>.
+<h3>How to differentiate MySQL errors</h3>
+<p>
+We'd like to determine if the requested username is already taken - and show a
+user-friendly message if so.
+However, the attempt to add a user could fail for other reasons as well, so it
+would be wrong to show the same user-friendly message on all errors.
+<p>
+One of the approaches would be to issue a SELECT query on the username after an
+attempt to add the user fails.
+If the SELECT query returns 1 row, then the username is definitely already
+taken.
+We can implement this as follows:
+<p>
+<pre>
+if (!$stmt-&gt;execute()) {
+	$save_error = $db-&gt;error;
+	$stmt-&gt;close();
+
+// Does the user already exist?
+	($stmt = $db-&gt;prepare('select user from users where user=?'))
+		|| fail('MySQL prepare', $db-&gt;error);
+	$stmt-&gt;bind_param('s', $user)
+		|| fail('MySQL bind_param', $db-&gt;error);
+	$stmt-&gt;execute()
+		|| fail('MySQL execute', $db-&gt;error);
+	$stmt-&gt;store_result()
+		|| fail('MySQL store_result', $db-&gt;error);
+
+	if ($stmt-&gt;num_rows === 1)
+		fail('This username is already taken');
+	else
+		fail('MySQL execute', $save_error);
+}
+</pre>
+<p>
+This works, and it might be the most reliable and portable approach, however
+there exists a shortcut approach: the MySQL server returns a very specific
+error code when the error is an attempt to create a duplicate user record.
+If we aren't too concerned about a possible change in MySQL's error codes in a
+future version of it, then we can simply check for the known error code.
+Even if this stops working, the only impact will be a less friendly message
+displayed to the user.
+<p>
+<pre>
+if (!$stmt-&gt;execute()) {
+	if ($db-&gt;errno === 1062 /* ER_DUP_ENTRY */)
+		fail('This username is already taken');
+	else
+		fail('MySQL execute', $db-&gt;error);
+}
+</pre>
+<p>
+We will be using this shortcut approach in further revisions of the sample
+program.
+<h3>The "Magic Quotes" issue</h3>
+<p>
+<a href="http://www.php.net/manual/en/security.magicquotes.php">
+Magic Quotes</a> is a deprecated feature of PHP.
+When enabled, which it is on many web servers, the PHP interpreter will
+automagically escape many inputs to PHP scripts.
+This may be desirable to provide some minimal security for poorly-written PHP
+scripts that fail to defend themselves against SQL injections, but with
+properly-written PHP scripts this feature may actually be more of a problem.
+<p>
+Specifically, unless we deal with this issue, a password containing the single
+quote character <i>might</i> or <i>might not</i> reach our PHP application with
+the character escaped.
+If the <i>magic_quotes_gpc</i> PHP setting is then toggled, or if our PHP
+application install is moved to another system where this setting is set
+differently, the password will stop working.
+<p>
+Thus, we need to check whether <i>magic_quotes_gpc</i> was set and undo its
+effect at least for specific inputs where this matters.
+Here's the code:
+<p>
+<pre>
+function get_post_var($var)
+{
+	$val = $_POST[$var];
+	if (get_magic_quotes_gpc())
+		$val = stripslashes($val);
+	return $val;
+}
+</pre>
+<p>
+We'll use this function instead of direct reads from <i>$_POST[]</i>.
+<h3>Input filtering</h3>
+<p>
+Let's sanitize our inputs in order to mitigate some obscure DoS attacks,
+as well as not to rely on our use of prepared statements alone to prevent
+SQL injections.
+<p>
+<pre>
+$user = get_post_var('user');
+/* Sanity-check the username, don't rely on our use of prepared statements
+ * alone to prevent attacks on the SQL server via malicious usernames. */
+if (!preg_match('/^[a-zA-Z0-9_]{1,60}$/', $user))
+	fail('Invalid username');
+
+$pass = get_post_var('pass');
+/* Don't let them spend more of our CPU time than we were willing to.
+ * Besides, bcrypt happens to use the first 72 characters only anyway. */
+if (strlen($pass) &gt; 72)
+	fail('The supplied password is too long');
+</pre>
+<p>
+The sample program with the improvements mentioned so far implemented is found
+under the <b><i>demo2</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<a name="authenticating-users"></a>
+<h2>How to authenticate existing users</h2>
+<p>
+Let's enhance our sample program with support for multiple operations -
+initially there will be two of them: creating a new user account and logging
+in to an existing account.
+We will be passing the operation code via a hidden form field.
+Let's add it into our existing form:
+<p>
+<pre>
+&lt;input type="hidden" name="op" value="new"&gt;
+</pre>
+<p>
+And let's add a login form:
+<pre>
+&lt;form action="user-man.php" method="POST"&gt;
+&lt;input type="hidden" name="op" value="login"&gt;
+Username:&lt;br&gt;
+&lt;input type="text" name="user" size="60"&gt;&lt;br&gt;
+Password:&lt;br&gt;
+&lt;input type="password" name="pass" size="60"&gt;&lt;br&gt;
+&lt;input type="submit" value="Log in"&gt;
+&lt;/form&gt;
+</pre>
+<p>
+Now let's start to add support into the PHP code.
+First, validate the operation code:
+<p>
+<pre>
+$op = $_POST['op'];
+if ($op !== 'new' &amp;&amp; $op !== 'login')
+	fail('Unknown request');
+</pre>
+<p>
+Then let's introduce an <i>if</i> statement and move our new user creation code
+under it:
+<p>
+<pre>
+if ($op === 'new') {
+	$hash = $hasher-&gt;HashPassword($pass);
+	if (strlen($hash) &lt; 20)
+		fail('Failed to hash new password');
+	unset($hasher);
+
+	($stmt = $db-&gt;prepare('insert into users (user, pass) values (?, ?)'))
+		|| fail('MySQL prepare', $db-&gt;error);
+	$stmt-&gt;bind_param('ss', $user, $hash)
+		|| fail('MySQL bind_param', $db-&gt;error);
+	if (!$stmt-&gt;execute()) {
+		if ($db-&gt;errno === 1062 /* ER_DUP_ENTRY */)
+			fail('This username is already taken');
+		else
+			fail('MySQL execute', $db-&gt;error);
+	}
+
+	$what = 'User created';
+}
+</pre>
+<p>
+To perform user authentication, we'll need to obtain the user's password hash
+encoding string using a SELECT query for the supplied username, then use the
+<i>CheckPassword()</i> method from <i>phpass</i> to check the supplied password
+against the hash.
+Let's introduce an <i>else</i> branch with our "login" code in it:
+<p>
+<pre>
+} else {
+	$hash = '*'; // In case the user is not found
+	($stmt = $db-&gt;prepare('select pass from users where user=?'))
+		|| fail('MySQL prepare', $db-&gt;error);
+	$stmt-&gt;bind_param('s', $user)
+		|| fail('MySQL bind_param', $db-&gt;error);
+	$stmt-&gt;execute()
+		|| fail('MySQL execute', $db-&gt;error);
+	$stmt-&gt;bind_result($hash)
+		|| fail('MySQL bind_result', $db-&gt;error);
+	if (!$stmt-&gt;fetch() &amp;&amp; $db-&gt;errno)
+		fail('MySQL fetch', $db-&gt;error);
+
+	if ($hasher-&gt;CheckPassword($pass, $hash)) {
+		$what = 'Authentication succeeded';
+	} else {
+		$what = 'Authentication failed';
+	}
+	unset($hasher);
+}
+</pre>
+<p>
+Finally, let's have our script print the authentication result:
+<p>
+<pre>
+echo "$what\n";
+</pre>
+<p>
+That's all - <b>we can now "log in"</b> as <i>myuser</i> and see the
+"Authentication succeeded" message.
+If we enter a wrong password for the user or if the target username does not
+exist, we see "Authentication failed".
+<p>
+Please find this revision of the HTML file and the sample program
+in the <b><i>demo3</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<a name="changing-user-passwords"></a>
+<h2>How to change user passwords</h2>
+<p>
+Let's introduce the proper HTML form:
+<p>
+<pre>
+&lt;form action="user-man.php" method="POST"&gt;
+&lt;input type="hidden" name="op" value="change"&gt;
+Username:&lt;br&gt;
+&lt;input type="text" name="user" size="60"&gt;&lt;br&gt;
+Current password:&lt;br&gt;
+&lt;input type="password" name="pass" size="60"&gt;&lt;br&gt;
+New password:&lt;br&gt;
+&lt;input type="password" name="newpass" size="60"&gt;&lt;br&gt;
+&lt;input type="submit" value="Change password"&gt;
+&lt;/form&gt;
+</pre>
+<p>
+and support for the additional operation code into the PHP script:
+<pre>
+$op = $_POST['op'];
+if ($op !== 'new' &amp;&amp; $op !== 'login' &amp;&amp; $op !== 'change')
+	fail('Unknown request');
+</pre>
+<p>
+Now let's add to the user authentication branch of the existing
+<i>if</i>&nbsp;/&nbsp;<i>else</i> statement.
+When authentication fails, reset <i>$op</i> such that we don't take any other
+action:
+<p>
+<pre>
+	if ($hasher-&gt;CheckPassword($pass, $hash)) {
+		$what = 'Authentication succeeded';
+	} else {
+		$what = 'Authentication failed';
+		$op = 'fail'; // Definitely not 'change'
+	}
+</pre>
+<p>
+Then add our new code:
+<p>
+<pre>
+	if ($op === 'change') {
+		$stmt-&gt;close();
+
+		$newpass = get_post_var('newpass');
+		if (strlen($newpass) &gt; 72)
+			fail('The new password is too long');
+		$hash = $hasher-&gt;HashPassword($newpass);
+		if (strlen($hash) &lt; 20)
+			fail('Failed to hash new password');
+		unset($hasher);
+
+		($stmt = $db-&gt;prepare('update users set pass=? where user=?'))
+			|| fail('MySQL prepare', $db-&gt;error);
+		$stmt-&gt;bind_param('ss', $hash, $user)
+			|| fail('MySQL bind_param', $db-&gt;error);
+		$stmt-&gt;execute()
+			|| fail('MySQL execute', $db-&gt;error);
+
+		$what = 'Password changed';
+	}
+</pre>
+<p>
+That's it - <b>an existing user may now get the password changed</b>.
+<p>
+This revision of the HTML file and the sample program may be found in the
+<b><i>demo4</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<p>
+In a real PHP application, you will likely also have other ways to change a
+user's password - by an administrative user (then authentication of the user is
+bypassed) or with authentication by a temporary token (for forgotten passwords).
+These may be implemented in a similar fashion.
+<a name="enforcing-password-policy"></a>
+<h2>How to enforce a password policy</h2>
+<p>
+As far as I'm aware, there's currently no <i>decent</i> password/passphrase
+strength checking module intended specifically for PHP (either written in PHP
+or implemented as a PHP extension).
+<small>(The Crack extension in PECL, which is an interface to CrackLib, is not
+quite it (just like CrackLib itself is not good enough these days).
+There are many regexp-based recipes found on the web, but these
+disregard/disallow passphrases, have the policy hard-coded, and are mostly
+un<a href="http://www.openwall.com/lists/announce/2010/03/16/1">tested on real-world passwords</a>.)</small>
+<p>
+So we will be invoking the <i>pwqcheck</i>(1) program from the
+<a href="http://www.openwall.com/passwdqc/">passwdqc package</a>.
+This program is specifically intended for use from scripts.
+<p>
+Let's introduce a new PHP include file, called <i>pwqcheck.php</i>, defining
+the following function:
+<p>
+<pre>
+function pwqcheck($newpass, $oldpass = '', $user = '', $aux = '', $args = '')
+{
+// pwqcheck(1) itself returns the same message on internal error
+	$retval = 'Bad passphrase (check failed)';
+
+	$descriptorspec = array(
+		0 =&gt; array('pipe', 'r'),
+		1 =&gt; array('pipe', 'w'));
+// Leave stderr (fd 2) pointing to where it is, likely to error_log
+
+// Replace characters that would violate the protocol
+	$newpass = strtr($newpass, "\n", '.');
+	$oldpass = strtr($oldpass, "\n", '.');
+	$user = strtr($user, "\n:", '..');
+
+// Trigger a "too short" rather than "is the same" message in this special case
+	if (!$newpass &amp;&amp; !$oldpass)
+		$oldpass = '.';
+
+	if ($args)
+		$args = ' ' . $args;
+	if (!$user)
+		$args = ' -2' . $args; // passwdqc 1.2.0+
+
+	$command = 'exec '; // No need to keep the shell process around on Unix
+	$command .= 'pwqcheck' . $args;
+	if (!($process = @proc_open($command, $descriptorspec, $pipes)))
+		return $retval;
+
+	$err = 0;
+	fwrite($pipes[0], "$newpass\n$oldpass\n") || $err = 1;
+	if ($user)
+		fwrite($pipes[0], "$user::::$aux:/:\n") || $err = 1;
+	fclose($pipes[0]) || $err = 1;
+	($output = stream_get_contents($pipes[1])) || $err = 1;
+	fclose($pipes[1]);
+
+	$status = proc_close($process);
+
+// There must be a linefeed character at the end.  Remove it.
+	if (substr($output, -1) === "\n")
+		$output = substr($output, 0, -1);
+	else
+		$err = 1;
+
+	if ($err === 0 &amp;&amp; ($status === 0 || $output !== 'OK'))
+		$retval = $output;
+
+	return $retval;
+}
+</pre>
+<p>
+Please note that this passes any untrusted input via the file descriptor,
+not via the command-line (which would be unsafe).
+Please refer to the <i>pwqcheck(1)</i> manual page included in the
+<i>passwdqc</i> package for information on the command-line options and on the
+"protocol" used.
+<p>
+The function accepts the new password or passphrase,
+the strength of which is to be checked.
+It optionally also accepts the old password or passphrase, the username, and
+any auxiliary user-specific information such as the user's full name and/or
+e-mail address (multiple items may be separated with spaces).
+All of this information is treated as untrusted input, and it is used for more
+accurate checking of the strength of the new password or passphrase.
+<p>
+Finally, the function optionally accepts additional arguments to pass to
+<i>pwqcheck(1)</i> via the command-line.
+These may override the default password policy.
+Obviously, they must not be under an untrusted user's control.
+<p>
+The return value is the string 'OK' if the new password/passphrase passes the
+requirements.
+Otherwise the return value is a message explaining one of the reasons why the
+password/passphrase is rejected.
+<p>
+Let's make use of this in our program.
+Include the file and define some settings (that we'll use a bit later):
+<p>
+<pre>
+require 'pwqcheck.php';
+
+// Do we have the pwqcheck(1) program from the passwdqc package?
+$use_pwqcheck = TRUE;
+// We can override the default password policy
+$pwqcheck_args = '';
+#$pwqcheck_args = 'config=/etc/passwdqc.conf';
+</pre>
+<p>
+Define a wrapper function specific to our program:
+<p>
+<pre>
+function my_pwqcheck($newpass, $oldpass = '', $user = '')
+{
+	global $use_pwqcheck, $pwqcheck_args;
+	if ($use_pwqcheck)
+		return pwqcheck($newpass, $oldpass, $user, '', $pwqcheck_args);
+
+/* Some really trivial and obviously-insufficient password strength checks -
+ * we ought to use the pwqcheck(1) program instead. */
+	$check = '';
+	if (strlen($newpass) &lt; 7)
+		$check = 'way too short';
+	else if (stristr($oldpass, $newpass) ||
+	    (strlen($oldpass) &gt;= 4 &amp;&amp; stristr($newpass, $oldpass)))
+		$check = 'is based on the old one';
+	else if (stristr($user, $newpass) ||
+	    (strlen($user) &gt;= 4 &amp;&amp; stristr($newpass, $user)))
+		$check = 'is based on the username';
+	if ($check)
+		return "Bad password ($check)";
+	return 'OK';
+}
+</pre>
+<p>
+Please note that this lets you experiment with very basic password strength
+checking (with a trivial hard-coded policy) even if you have not yet installed
+<i>passwdqc</i>.
+<p>
+Finally, introduce uses of the function into two places in the program -
+when creating a new user:
+<p>
+<pre>
+if ($op === 'new') {
+	if (($check = my_pwqcheck($pass, '', $user)) !== 'OK')
+		fail($check);
+</pre>
+and when changing a user's password:
+<pre>
+	if ($op === 'change') {
+		$stmt-&gt;close();
+
+		$newpass = get_post_var('newpass');
+		if (strlen($newpass) &gt; 72)
+			fail('The new password is too long');
+		if (($check = my_pwqcheck($newpass, $pass, $user)) !== 'OK')
+			fail($check);
+</pre>
+<p>
+We're done.
+Now let's test it - strong passwords and passphrases should be accepted,
+whereas weak ones should be getting rejected with various messages.
+<p>
+The <i>pwqcheck.php</i> file (with a lengthy comment in it) and this revision
+of the sample program are found in the
+<b><i>demo5</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<h3>Future work</h3>
+<p>
+Someone should to create a PHP extension around <i>passwdqc</i>,
+making the functions of <i>libpasswdqc</i> available for use from PHP scripts.
+<h2>Timing attacks</h2>
+<p>
+Our sample program is vulnerable to probing for valid usernames via timing
+attacks: its response time differs for existing vs. non-existent users.
+<small>
+(The ability for new users to self-register provides another way for someone to
+probe for valid usernames, though.
+For now, we'll assume that either self-registration is disabled (or restricted)
+or we care about probing for valid usernames via timing attacks anyway,
+such as because a large number of user registrations is immediately apparent
+whereas timing attacks might not be.)
+</small>
+<p>
+We may try to mitigate this by always performing the password hashing step -
+even if the target username could not be found in the database.
+First, we need to define a dummy "salt" string (a portion of the hash encoding
+string) that we'll use for computing the dummy hashes:
+<p>
+<pre>
+/* Dummy salt to waste CPU time on when a non-existent username is requested.
+ * This should use the same hash type and cost parameter as we're using for
+ * real/new hashes.  The intent is to mitigate timing attacks (probing for
+ * valid usernames).  This is optional - the line may be commented out if you
+ * don't care about timing attacks enough to spend CPU time on mitigating them
+ * or if you can't easily determine what salt string would be appropriate. */
+$dummy_salt = '$2a$08$1234567890123456789012';
+</pre>
+<p>
+Then we introduce the following code right before our call to
+<i>CheckPassword()</i>:
+<p>
+<pre>
+// Mitigate timing attacks (probing for valid usernames)
+	if (isset($dummy_salt) &amp;&amp; strlen($hash) &lt; 20)
+		$hash = $dummy_salt;
+</pre>
+<p>
+<small>
+Alternatively, we could use the <i>HashPassword()</i> method, which would
+generate a new salt for us, but its processing cost is not exactly the same
+as that of <i>CheckPassword()</i>, so a (smaller) timing leak would remain.
+</small>
+<p>
+A revision of the sample program with the above changes is included in the
+<b><i>demo6</i> subdirectory in the accompanying archive</b>
+(<a href="phpass-article-3.tar.gz">tar.gz</a>,
+<a href="phpass-article-3.zip">ZIP</a>).
+<p>
+Unfortunately, this does not fully eliminate timing leaks - e.g., the MySQL
+server's response time may differ - but those leaks are likely smaller than
+leaks through properly-stretched (purposely slow) password hashing.
+Yet it might remain possible to probe for valid usernames with a large number
+of timings for each potential username.
+<p>
+Moreover, major timing leaks will remain if your database contains hashes of
+mixed types or with different password stretching iteration counts.
+<p>
+<small>
+Timing leaks are surprisingly difficult to fully deal with.
+Naive attempts to deal with them such as by introducing random delays
+(even those in excess of "the signal")
+do not work as well as one might expect them to.
+"Constant time" would do the trick, but it is difficult to achieve,
+especially when we consider both real and CPU time,
+as well as other server resource consumption,
+which could also be indirectly measured by an attacker.
+</small>
+<h2>Other related concerns</h2>
+<p>
+There are many other security, usability, and implementation issues closely
+related to the way a web application manages its users and passwords.
+Discussing those issues in full detail and with sample code
+is beyond the scope of this article,
+yet it is important for you to be aware of them.
+<a name="random-passwords"></a>
+<h3>Randomly-generated passwords/passphrases</h3>
+<p>
+As an alternative to forcing the user to come up with a "strong-looking"
+password or passphrase, an application may generate and offer a random
+password or passphrase.
+(Preferably, the user should also be allowed to pick a suitable password or
+passphrase of their own, which is the case we've been considering so far.)
+<p>
+This is particularly important when new accounts are to be created by an
+administrator rather than by the users themselves.
+It would be unrealistic for the administrator to come up with sufficiently
+different passwords/passphrases for a large number of users, so letting a
+computer generate those passwords or passphrases is the only reasonable way
+to go.
+<p>
+One of the ways to implement this is by invoking the <i>pwqgen</i>(1) program
+from the
+<a href="http://www.openwall.com/passwdqc/">passwdqc package</a>.
+Unlike the  <i>pwqcheck</i>(1) program discussed above, <i>pwqgen</i> does not
+require two-way communication via file descriptors, so you may invoke it with
+the simpler <i>popen()</i> and <i>pclose()</i> functions.
+Please be sure to check the exit status from the program.
+Currently, <i>pwqgen</i> only works on systems with <i>/dev/urandom</i>.
+<p>
+It is also possible to try to generate random passwords or passphrases in PHP
+code and without a dependency on <i>/dev/urandom</i>, but chances are that
+those passwords or passphrases won't in fact be as random as they might look -
+e.g., certain versions of Joomla running with certain versions of PHP are able
+to generate at most 1 million of different initial passwords, which an attacker
+can test against a stolen or leaked password hash in a second.
+<a name="randomness"></a>
+<h3>Randomness</h3>
+<p>
+It is difficult to obtain a significant amount of cryptographically random
+data in pure and portable PHP code.
+As it has been
+<a href="#phpass-randomness">mentioned above</a>, <i>phpass</i> uses
+<i>/dev/urandom</i> with a fallback to its own pseudo-random byte stream
+generator.
+The latter is good enough for
+<a href="#salting">salting</a>, but it might not be good enough for other
+purposes because of the limited amount of entropy that it uses as its input.
+Other than that, it uses a decent approach.
+Drupal 7 attempts to reuse a revision of the same code (derived from
+<i>phpass</i>) to generate all sorts of random tokens, not just salts, and the
+Drupal developers are trying to process more entropy by feeding certain PHP
+variables and results of certain PHP function calls into the algorithm.
+It is difficult to say just how much entropy is added in this way and whether
+it is sufficient for a given purpose or not.
+Additionally, a related concern is that if not enough entropy is being
+processed, then it might be possible to infer the inputs to the algorithm
+from the stream of "random" outputs
+by testing likely inputs in an offline attack.
+So a reasonable requirement for the inputs could be that they not only are
+hopefully sufficiently random, but are also not security-sensitive otherwise.
+<p>
+Other algorithms may have additional undesirable properties - such as leaking
+of the inputs or/and of the internal state in a more direct way, thereby
+allowing for further "random" outputs to be predicted.
+Furthermore, if the size or entropy of the internal state is too small,
+then the entropy of the resulting "random" outputs will also likely be smaller
+than that of the inputs,
+and additionally the internal state itself may be inferred in an offline
+attack given a few "random" outputs, which would facilitate prediction of
+further "random" outputs.
+<p>
+Overall, it is easier to get this wrong than to get it right, and you're
+unlikely to have any assurance of having it done right.
+<p>
+Thus, it is preferable to use a supply of randomness provided by the OS, such
+as <i>/dev/urandom</i>.
+<small>
+Another option is to run and query a "randomness daemon", which would
+accumulate randomness over a long period of time, but this approach has been
+largely obsoleted by modern Unix-like systems having implemented a randomness
+pool in the kernel, which is what <i>/dev/urandom</i> is an interface to.
+</small>
+<p>
+A PHP-specific issue with accessing an external supply of randomness, such as
+<i>/dev/urandom</i>, is PHP's lack of support for unbuffered reads.
+Even if your application only reads, say, 8 bytes, PHP will read an entire
+buffer worth of data (typically 8192 bytes).
+This slows things down
+<small>
+(albeit not too badly - e.g., it might be taking around 1 millisecond to read
+8192 bytes from <i>/dev/urandom</i> on a modern Linux box)
+</small>
+and it wastes the precious entropy.
+A revision of <i>phpass</i>-derived code being considered for Drupal 7
+attempts to partially address this by rounding up the number of bytes to read
+to a multiple of 4096
+(considering that PHP would effectively do at least the same anyway)
+and by maintaining its own buffer for use in subsequent calls to the function.
+This helps when multiple random "numbers" need to be obtained while servicing
+a single request, but other than that it is only a partial workaround.
+It would be best to have the issue fixed in PHP itself (by introducing
+optional unbuffered reads).
+<p>
+Update (August 2010): PHP 5.3.3+ has in fact introduced
+<a href="http://www.php.net/manual/en/function.stream-set-read-buffer.php">
+support for unbuffered reads</a>.
+We're not yet making use of it in phpass, though.
+<h3>Resetting forgotten passwords/passphrases</h3>
+<p>
+Typically, there's a way for a user to reset the password (or passphrase) by
+having the application send a message to the user's address previously
+registered in the system.
+The message may contain the new password
+(<a href="#random-passwords">randomly generated</a>) or it may contain a
+password reset token.
+The <a href="#randomness">randomness concerns</a> apply.
+<p>
+Here are some questions to consider before implementing this functionality:
+<p>
+Is the new password or passphrase passed in this way permanent or is it
+temporary (with a forced change upon login and/or an expiration date)?
+<p>
+If a token is passed, is it expiring?
+How is it to be passed back to the application?
+<small>
+(If it is embedded in an URL, then it is likely to get logged by any web proxy
+servers involved and by the final web server.
+Manual entry or copy&nbsp;&amp;&nbsp;paste into a form field might be a little
+bit safer.)
+</small>
+<a name="crypto-token"></a>
+<p>
+The token may be randomly generated and stored into the database.
+Alternatively, it may be computed as a
+<a href="http://en.wikipedia.org/wiki/Message_authentication_code">MAC</a>
+of the username, the user's address that the token is to be sent to
+(e-mail or the like), the current timestamp
+(with certain granularity - e.g., just the date, with no time of day),
+and maybe other system- and user-specific information,
+and with a secret key specific to each instance of the application.
+In the latter case, when a user returns to the system with a token to be
+validated, the correct token is simply regenerated using all the same data.
+If the two tokens match, the user is considered authenticated.
+If they don't, the check is repeated for the "previous" timestamp
+(just one time).
+Thus, these cryptographic tokens automatically expire in 1 to 2
+"units of time", but there's no way to deactivate them before they expire
+(e.g., upon first use) unless an extra parameter (such as a password change
+count for the user) was included under the MAC.
+The secret key needs to contain enough entropy (say, 80 bits or more) to
+withstand offline attacks on it given a valid token, and it needs to be
+different for each instance of the application.
+Luckily, it does not need to be easy to memorize, so there's no need to use
+<a href="#stretching">key stretching</a>,
+but instead this lack of stretching needs to be compensated for by including
+more entropy into the key than you would include into a password.
+<h3>Online password guessing</h3>
+<p>
+With password hashing, we've been trying to mitigate offline password cracking
+given stolen or leaked password hashes.
+However, what about online attacks - where an attacker probes candidate
+passwords or passphrases by trying to authenticate to our web application with
+them?
+Obviously, those attacks would generally run a lot slower than offline ones,
+yet they might succeed in guessing some of the weakest passwords.
+For example,
+<a href="http://reusablesec.blogspot.com/2009/12/rockyou-32-million-password-list-top.html">
+simply probing for the password "123456" might result in almost 1% of accounts
+getting compromised</a>.
+<p>
+Luckily, by
+<a href="#enforcing-password-policy">enforcing a password policy</a>
+meant to prevent easy cracking of our password hashes, we also defeat online
+password guessing.
+Thus, if you went for this, then implementing any other measures to deal with
+online password guessing becomes relatively unimportant.
+In fact, if you're confident in your password policy, then you may use very
+relaxed account lockout settings or none at all in order to avoid causing
+problems for legitimate users.
+<p>
+On the other hand, if you neglected or decided not to implement password policy
+enforcement, if you have old passwords that pre-date the policy, or if you have
+potentially non-compliant passwords for any other reason (e.g., imported from
+another system), then it may be important to implement countermeasures against
+online password probing.
+A typical countermeasure is temporary or permanent account lockout if more than
+N consecutive authentication attempts fail in X time.
+This should be further improved to deal with attacks that don't target a
+specific username - e.g., if an attacker tries just the password "123456"
+against 1000 different usernames, no single user account will be locked out,
+yet the attacker might gain access to around 10 accounts (if all of the
+usernames exist).
+A way to mitigate this is to apply per-connecting-address limits on
+authentication attempts.
+Yet a distributed attack, such as using a botnet, would defeat that.
+So enforcing a password policy is a better way to go.
+<h3>Denial of Service (DoS) attacks</h3>
+<p>
+Almost any network service is susceptible to certain kinds of resource
+consumption DoS attacks.
+As it relates to the topic of this article, online password probing attacks
+discussed above may also happen to be DoS attacks, typically unintentionally.
+Currently, this is not common with web applications, but it does happen with
+other network services.
+<p>
+Intentional DoS attacks may find and use requests that are even more costly for
+the server to process - e.g., those involving expensive database queries - or
+they may simply use an even higher intensity stream of non-targeted requests.
+<p>
+<i>- "Doesn't <a href="#stretching">password stretching</a> make my web
+application more susceptible to DoS attacks?"</i><br>
+- With reasonable settings, no.
+The application developer should provide a default password stretching
+iteration count that will not make this a problem in practice, and the system
+administrator may tune this setting to better match a given system's capacity
+and expected use pattern.
+For example, if a web application is not able to handle more than 50 requests
+per second for other reasons anyway, then having password authentication take
+10 ms will not provide a significantly more attractive way of attack.
+In fact, since different kinds of requests consume server resources
+differently, perhaps the login request, which does not involve much work
+besides password hashing on the CPU, won't be the heaviest.
+Quite often, disk I/O capacity (and not CPU time) is the scarce resource.
+<p>
+Another potential DoS attack relevant to the topic of this article is through
+registration of too many user accounts, if your web application is meant to
+permit for users to self-register.
+This kind of attack is currently not common in practice - likely because other
+DoS attacks, which are of less relevance to this article, are more effective.
+To mitigate this attack, you could implement all sorts of limits - e.g.,
+no more than N user registrations per source IP address per day,
+no more than M users with the same domain name portion of e-mail address -
+and require validation of the e-mail address by a "secure token"
+<a href="#crypto-token">implemented using a MAC</a>.
+before the user is added to the database.
+<h3>Password policy enforcement and usability concerns</h3>
+<p>
+It may be inconvenient for many users to have to submit a form only to get
+their desired password or passphrase rejected (for not being compliant to the
+policy), then have to come up with another password or passphrase and resubmit.
+<p>
+This may be partially dealt with by summarizing the gist of the policy on the
+web page with the form - e.g. for <i>passwdqc</i>'s default policy as of this
+writing you can use:
+<p>
+"A valid password should be a mix of upper and lower case letters,
+digits, and other characters.  You can use an 8 character long
+password with characters from at least 3 of these 4 classes, or
+a 7 character long password containing characters from all the
+classes.  An upper case letter that begins the password and a
+digit that ends it do not count towards the number of character
+classes used.
+<p>
+A passphrase should be of at least 3 words, 11 to 40 characters
+long, and contain enough different characters."
+<p>
+You may also offer randomly generated passwords and/or passphrases.
+Just do not give any <i>static</i> examples of passwords or phrases
+that would pass the check.
+<p>
+Another improvement could be to have the web page <b>check the strength of the
+password or passphrase as the user types it</b> -
+such as by submitting it to the server every few seconds via
+<a href="http://en.wikipedia.org/wiki/Ajax_(programming)">Ajax</a> or by
+duplicating the most critical password strength checks in JavaScript.
+<small>
+(Indeed, this feature would only work if JavaScript is enabled in the user's
+web browser.)
+</small>
+Neither approach is perfect: the former would cause extra server load and
+the latter would not duplicate <i>passwdqc</i>'s actual checks exactly
+(they are a bit too complicated to fully duplicate them in JavaScript).
+Yet if you're so inclined, the C function to look at is <i>is_simple()</i> in
+<a href="http://cvsweb.openwall.com/cgi/cvsweb.cgi/Owl/packages/passwdqc/passwdqc/passwdqc_check.c">passwdqc_check.c</a>.
+A hybrid approach may work best - only bother the server with checking
+passwords or passphrases that pass the JavaScript checks.
+<p>
+Indeed, actual policy enforcement should be taking place on the server when the
+form is finally submitted anyway.
+<h3>Challenge/response authentication</h3>
+<p>
+Although the standard way to protect web application passwords while in transit
+is with SSL (https URLs), it may also be possible to protect them to a very
+limited extent by implementing
+<a href="http://en.wikipedia.org/wiki/Challenge-response_authentication">
+challenge/response authentication</a>.
+On the web browser side, this would be implemented in JavaScript
+(with a fallback to sending the password in the clear when JavaScript is not
+available).
+<p>
+Unfortunately, implementing this involves trade-offs, and the implementations
+I've seen so far are not great - they require that plaintext-equivalents of
+passwords or at best relatively weak password hashes be stored on the server,
+which is unacceptable when the number of user accounts is large (because the
+cost of recovery from a security compromise of the server or, say, of a backup
+dump becomes prohibitive).
+<p>
+Although
+<a href="http://openwall.info/wiki/people/solar/algorithms/challenge-response-authentication">
+storage of plaintext-equivalents on the server can be avoided</a>,
+certain other issues remain
+(e.g., it might not be possible to implement much password stretching in this
+way due to the slowness of JavaScript code).
+<p>
+So I do not currently recommend this approach (major advances in this area
+would need to occur first), yet I felt that it needed to be mentioned in here.
+<h3>Sessions</h3>
+<p>
+Once a user logs in, a session needs to be created - such as by using
+<a href="http://www.php.net/manual/en/book.session.php">
+PHP's session handling capabilities</a> or otherwise.
+There are plenty of potential issues related to session management,
+which could be the subject of a separate article.
+Since this is not <i>very</i> closely related to user and password management,
+since this is such a complicated topic, and since this article is too long as
+it is, I am leaving this topic completely beyond the scope of this article.
+<a name="license"></a>
+<h2>Licensing</h2>
+<p>
+This article, <i>not</i> including the embedded code snippets, is
+Copyright (c) 2010 Alexander Peslyak.
+All rights reserved.
+<p>
+Permission is hereby granted to reproduce and redistribute the article and its
+accompanying archive in their original form (unmodified and electronic only).
+<p>
+Non-exclusive rights are hereby granted to SektionEins GmbH to reproduce,
+distribute, and advertise the article including but not limited to on the
+<a href="http://php-security.org">http://php-security.org</a> website,
+in printed and/or electronic advertisements, and in all other media.
+<p>
+Others interested in reproducing and/or redistributing the article other than
+in its original form and/or other than electronically should contact the
+copyright holder for an express permission.
+<p>
+No copyright to the <b>source code snippets</b> found in this article and to the
+sample programs included in the accompanying archive is claimed, and they're
+hereby <b>placed in the public domain</b>.
+Please feel free to reuse them in your programs.
+<p>
+In case this attempt to disclaim copyright and place the source code snippets
+and the sample programs in the public domain is deemed null and void, then the
+snippets and the programs are Copyright (c) 2010 Alexander Peslyak and they're
+hereby released to the general public under the following terms:
+<p>
+Redistribution and use in source and binary forms,
+with or without modification, are permitted.
+<br>
+<small>
+(This is heavily cut-down "BSD license", to the point of being copyright only.)
+</small>
+</body>
+</html>

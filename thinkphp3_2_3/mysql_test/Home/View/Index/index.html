@@ -1,0 +1,165 @@
+<extend name="Index/Base" />
+<block name="customer">
+    <div class="container">
+        <div class="dropdown">
+            <button class="btn btn-default dropdown-toggle" type="button" id="selectClass" data-toggle="dropdown">
+                Please select Class Type
+                <span class="caret"></span>
+            </button>
+            <ul class="dropdown-menu" role="menu" id="classes">
+                <li><a tabindex="-1" href="javascript:;" classid="">图书</a></li>
+                <li><a tabindex="-1" href="javascript:;" classid="">服装</a></li>
+            </ul>
+        </div>
+        <form id="attrInput">
+
+        </form>
+        <button type="button" class="btn btn-default" id="prod_submit">提交</button>
+    </div>
+
+<script type="text/html" id="form_item">
+        <div class="form-group">
+            <label for="">{2}</label><input class="form-control" name="{1}" attr_id="{0}" type="text" />
+        </div>
+</script>
+<script type="text/html" id="custom_item">
+    <div class="panel panel-default">
+        <div class="panel-heading">{2}<button class="btn btn-default pull-right" attr_id="{0}" name="{1}" id="addProto" type="button" onclick="addNewLine(this);">添加属性</button></div>
+        <table class="table">
+            <tbody id="custom_value">
+
+            </tbody>
+        </table>
+    </div>
+</script>
+<script type="text/html" id="typeValue">
+    <tr class="{className}">
+        <td><label for="">自定义属性： </label><input type="text" name="{attr_name}" attr_id="{attr_id}"></td>
+        <td><label for="">值： </label><input type="text" name="{attr_name}" attr_id="{attr_id}"></td>
+        <td><button class="btn btn-default" type="button" attached="{className}" onclick="removeTR(this);">删除</button></td>
+    </tr>
+</script>
+<script type="text/html" id="mainItem">
+    <div class="form-group">
+        <label for="">商品名称</label><input class="form-control" name="prod_name" type="text" />
+    </div>
+    <div class="form-group">
+        <label for="">商品介绍</label><input class="form-control" name="prod_intr" type="text" />
+    </div>
+</script>
+    <script>
+        $(document).ready(function(){
+            var classId='';
+            if(typeof classes =='object')
+            {
+                var li='';
+                for(var i =0; i<classes.length;i++){
+                    li+='<li><a tabindex="-1" href="javascript:;" classid="'+classes[i].prod_classid+'">'+classes[i].prod_classname+'</a></li>';
+                }
+            }
+            $('#classes').html(li);
+            for(var j=0;j<$('#classes li a').length;j++)
+            {
+                $($('#classes li a')[j]).click(function(){
+                    classId=$(this).attr('classid');
+                    var temp=$('#mainItem').html();
+                    for(var i=0;i<attrs.length;i++)
+                    {
+                        if(attrs[i][4]==classId){
+                            if(!attrs[i][5])
+                            {
+                                temp+=replaceTpl(attrs[i],$('#form_item').html());
+                            }
+                            else
+                            {
+                                temp+=replaceTpl(attrs[i],$('#custom_item').html());
+                            }
+                        }
+                    }
+                    $('#attrInput').html(temp);
+                });
+            }
+
+
+            //以下是收集信息并上传
+//            $('#attrInput').submit(function() {
+//                return false;
+//            });
+            $('#prod_submit').click(function(){
+                var prod_data=[];
+                var attr_data=[];
+                var inputs=$('#attrInput').find('input');
+                for(var i=0;i<inputs.length;i++)
+                {
+                    var temp={};
+                    if($(inputs[i]).val()!='')
+                    {
+                        if(typeof $(inputs[i]).attr('attr_id')!='undefined')
+                        {
+                            temp['attr_id']=$(inputs[i]).attr('attr_id');
+                            temp['name']=$(inputs[i]).attr('name');
+                            temp['value']=$(inputs[i]).val();
+                            attr_data.push(temp);
+                        }
+                        else
+                        {
+                            temp['name']=$(inputs[i]).attr('name');
+                            temp['value']=$(inputs[i]).val();
+                            prod_data.push(temp);
+                        }
+                    }
+                }
+                var data={prod_data,attr_data};
+                data.classId=classId;
+                data=JSON.stringify(data);
+                console.log(data);
+                postData(data);     //提交表单数据
+            });
+
+
+            function postData(data)
+            {
+                if(data.attr_data==''||data.prod_data=='')return false;
+                $.post('/Home/Index/getForm',
+                        data,
+                        function(res){
+                            console.log(res);
+                            if(res>0)
+                            {
+                                alert('插入成功！');
+                                window.location.reload();
+                            }else{
+                                alert('failed!');
+                            }
+                        });
+            }
+            function replaceTpl(items,tpl){
+                $.each(items,function(k,value){
+                    var reg=new RegExp("\\{"+k+"\\}","img");
+                    tpl=tpl.replace(new RegExp(reg,'img'),value);
+                });
+                return tpl;
+            }
+        });
+        function addNewLine(obj){
+            var attrs=Array;
+//            console.log($(obj).attr('name'));
+            attrs['attr_id']=$(obj).attr('attr_id');
+            attrs['attr_name']=$(obj).attr('name');
+            attrs['className']=$(obj).attr('name')+$('#custom_value tr').length;
+            $('#custom_value').append(genCustomAttr(attrs,$('#typeValue').html()));
+        }
+        function genCustomAttr(items,tpl){
+            $.each(items,function(k,value){
+                var reg=new RegExp("\\{"+k+"\\}","img");
+                tpl=tpl.replace(new RegExp(reg,'img'),value);
+            });
+            return tpl;
+        }
+        function removeTR(obj)
+        {
+            var TRid=$(obj).attr('attached');
+            $('#custom_value').find('.'+TRid).remove();
+        }
+    </script>
+</block>

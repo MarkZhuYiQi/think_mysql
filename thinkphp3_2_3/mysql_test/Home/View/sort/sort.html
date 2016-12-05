@@ -1,0 +1,97 @@
+<extend name="Index/Base" />
+<block name="customer">
+    <script>
+        $(document).ready(function(){
+            sortFunc();
+            $('#sortSubmit').click(function(){
+                var sortData=getSort();
+                if(sortData!=null)
+                {
+                    $.post(
+                        '/Home/Sort/sortData',
+                        JSON.stringify(sortData),
+                        function(result){
+                            console.log(result);
+                        }
+                    );
+                }
+            });
+        });
+        function sortFunc(){
+            var sort=[$('#classify'),$('#date'),$('#click')];
+            for(var i=0;i<sort.length;i++)
+            {
+                sort[i].find('ul li').each(function(){      //找出每个li
+                    var buttonList=sort[i];
+                    var sortLi=this;                        //每个按钮下拉菜单中的li
+                    $(sortLi).click(function(){                //点击li
+                        buttonList.find('.sortTitle').text( $(this).find("a").text() ).attr('classId',$(this).find("a").attr('classId'));
+                    });
+                });
+            }
+        }
+        function getSort(){
+            var sortType=[];
+            var data=$('.sortTitle');
+            for(var i=0;i<data.length;i++)
+            {
+                var temp={
+                    name:$(data[i]).attr('name'),
+                    classId:$(data[i]).attr('classId')
+                };
+                sortType.push(temp);
+            }
+            return sortType;
+        }
+    </script>
+    <div class="container">
+        <div class="panel panel-default">
+            <div class="panel-body">
+                <div class="btn-group" id="classify">
+                    <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown">
+                        <span class="sortTitle" name="classify" classId="0"> 分类筛选 </span><span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a href="#" classId="0">默认</a></li>
+                        <li><a href="#" classId="1">汽车新闻</a></li>
+                        <li><a href="#" classId="2">人文情感</a></li>
+                        <li><a href="#" classId="3">世界</a></li>
+                        <li><a href="#" classId="4">程序员</a></li>
+                        <li><a href="#" classId="5">测试</a></li>
+                    </ul>
+                </div>
+                <div class="btn-group" id="date">
+                    <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown">
+                        <span class="sortTitle" name="date" classId="0"> 日期 </span><span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a href="#" classId="0">默认</a></li>
+                        <li><a href="#" classId="1">按日期升序</a></li>
+                        <li><a href="#" classId="2">按日期降序</a></li>
+                    </ul>
+                </div>
+                <div class="btn-group" id="click">
+                    <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown">
+                        <span class="sortTitle" name="click" classId="0"> 人气 </span><span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a href="#" classId="0">默认</a></li>
+                        <li><a href="#" classId="1">按人气升序</a></li>
+                        <li><a href="#" classId="1">按人气降序</a></li>
+                    </ul>
+                </div>
+                <button class="btn btn-primary pull-right" id="sortSubmit">提交</button>
+            </div>
+        </div>
+    </div>
+    <script type="text/html" id="item">
+        <div class="panel panel-default">
+                <div class="panel-heading">
+                <h3 class="panel-title">{news_title}</h3>
+                </div>
+                <div class="panel-body">
+                {news_content}
+                </div>
+                </div>
+    </script>
+</block>

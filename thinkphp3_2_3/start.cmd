@@ -1,0 +1,1 @@
+G:\wamp\bin\php\php5.5.12\php.exe -S localhost:9090 -t G:\wamp\www\thinkphp\thinkphp_3.2.3_full
