@@ -22,6 +22,6 @@ class SortController extends Controller
 
         $news=M();
         $res=$news->query('select * from news_main PARTITION(news_programsp0) order by id desc;');
-        var_export($res);
+        echo json_encode($res);
     }
 }
