@@ -11,7 +11,8 @@
                         '/Home/Sort/sortData',
                         JSON.stringify(sortData),
                         function(result){
-                            genItem(JSON.parse(result));
+                            console.log(result);
+                            $('#news').html(genItem(JSON.parse(result)));
                         }
                     );
                 }
@@ -45,17 +46,21 @@
         }
         function genItem(data)
         {
+            var str='';
             for(var i=0;i<data.length;i++)
             {
                 var item=data[i];
-                for(var j in item)
-                {
-                    genTpl($('#item').html(),j,item[j]);
-                }
+                str+=genTpl($('#item').html(),item);
             }
+            return str;
         }
-        function genTpl(tpl,key,data){
-            tpl.replace();
+        function genTpl(tpl,data){
+            for(var i in data)
+            {
+                tpl=tpl.replace(new RegExp("{"+i+"}",'gm'),data[i]);
+            }
+            return tpl;
+
         }
     </script>
     <div class="container">
@@ -80,8 +85,9 @@
                     </button>
                     <ul class="dropdown-menu">
                         <li><a href="#" classId="0">默认</a></li>
-                        <li><a href="#" classId="1">按日期升序</a></li>
-                        <li><a href="#" classId="2">按日期降序</a></li>
+                        <li><a href="#" classId="2014">2014</a></li>
+                        <li><a href="#" classId="2015">2015</a></li>
+                        <li><a href="#" classId="2016">2016</a></li>
                     </ul>
                 </div>
                 <div class="btn-group" id="click">
@@ -91,19 +97,14 @@
                     <ul class="dropdown-menu">
                         <li><a href="#" classId="0">默认</a></li>
                         <li><a href="#" classId="1">按人气升序</a></li>
-                        <li><a href="#" classId="1">按人气降序</a></li>
+                        <li><a href="#" classId="2">按人气降序</a></li>
                     </ul>
                 </div>
                 <button class="btn btn-primary pull-right" id="sortSubmit">提交</button>
             </div>
         </div>
-        <div class="panel panel-default">
-            <div class="panel-heading">
-                <h3 class="panel-title">{news_title}<span class="pull-right" style="font-size:12px;color:#999;">点击量：<span>{news_click}</span></span></h3>
-            </div>
-            <div class="panel-body">
-                {news_content}
-            </div>
+        <div id="news">
+
         </div>
     </div>
     <script type="text/html" id="item">
