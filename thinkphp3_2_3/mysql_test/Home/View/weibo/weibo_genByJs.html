@@ -1,0 +1,104 @@
+<extend name="Index/Base" />
+<block name="customer">
+    <style type="text/css">
+        .weibo-footer a{
+            font-size:13px;
+            display:inline-block;
+            text-align:center;
+            width:24.3%;
+            height:35px;
+            line-height:35px;
+        }
+        .panel-footer{
+            padding:0;
+        }
+        .postComment{
+            margin:5px 10px 0 0;
+        }
+    </style>
+    <script>
+        var weibo_list=[];
+    </script>
+    <script src="/Home/Weibo/showResult"></script>
+
+    <div class="container weibo"></div>
+
+
+
+    <script type="text/html" id="weibo_item">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title">{user_id}</h3>
+            </div>
+            <div class="panel-body">
+                {topic_content}
+            </div>
+            <div class="panel-footer weibo-footer" style="background:white">
+                <a href="javascript:;" class="commentBtn"  onclick="addCommentBox(this);">评论 <span class="badge">{replies}</span></a>|
+                <a href="#">转发 <span class="badge">{repost}</span></a>|
+                <a href="#">点赞 <span class="badge">{views}</span></a>|
+                <a href="#">收藏 <span class="badge">{collects}</span></a>
+            </div>
+        </div>
+    </script>
+
+    <script type="text/html" id="commentBox">
+        <div id="commentArea">
+            <textarea class="form-control" rows="3"></textarea>
+            <button class="btn btn-info pull-right postComment">发表评论</button>
+        </div>
+    </script>
+    <script>
+        $(document).ready(function(){
+            if($('.weibo').html(gen_weibo_list())!='')
+            {
+                $('.postcomment').attr('disabled',false);
+                $('.commentBtn').click(function(){
+                    addCommentBox(this);
+                });
+            }
+        });
+        function addCommentBox(link){
+            if($('#commentArea').html())
+            {
+                $('#commentArea').remove();
+                return;
+            }
+            var boxLocation=$(link).parents('.weibo');
+            var commentBox=$('#commentBox').html();
+            boxLocation.append(commentBox);
+            $('.postComment').click(function(){
+                var btn=$(this);
+                btn.attr('disabled',true);
+                btn.html('正在提交评论...');
+                showInfo('提交评论成功',function(){},2);
+                btn.attr('disabled',false);
+                btn.html('提交评论');
+            })
+        }
+        function postComment(){
+
+        }
+        function gen_weibo_list(){
+            if(weibo_list!=null)
+            {
+                var tpl=$('#weibo_item').html();
+                var detail='';
+                for(var k in weibo_list)
+                {
+                    detail+=genTpl(weibo_list[k],tpl);
+                }
+            }
+            return detail;
+        }
+        function genTpl(item,tpl){
+            for(var k in item)
+            {
+                tpl=tpl.replace(new RegExp('{'+k+'}','gm'),item[k]);
+            }
+            var pattern=/{[\\w]*?}/gm;      //正则匹配 \\w，为啥少\就不行了
+            tpl=tpl.replace(pattern,'');
+            return tpl;
+        }
+    </script>
+</block>

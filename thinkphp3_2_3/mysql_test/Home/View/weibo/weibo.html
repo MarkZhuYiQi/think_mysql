@@ -1,0 +1,120 @@
+<extend name="Index/Base" />
+<block name="customer">
+    <style type="text/css">
+        .weibo-footer a{
+            font-size:13px;
+            display:inline-block;
+            text-align:center;
+            width:24.3%;
+            height:35px;
+            line-height:35px;
+        }
+        .panel-footer{
+            padding:0;
+        }
+        .postComment{
+            margin:5px 10px 0 0;
+        }
+    </style>
+    <div class="container weibo">
+        <foreach name="weibo_list" item="list">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h3 class="panel-title">{$list.user_id}</h3>
+                </div>
+                <div class="panel-body">
+                    {$list.topic_content}
+                </div>
+                <div class="panel-footer weibo-footer" topic_id="{$list.topic_id}" style="background:white">
+                    <a href="javascript:;" class="commentBtn">评论 <span class="badge">{$list.replies}</span></a>|
+                    <a href="#">转发 <span class="badge">{$list.repost}</span></a>|
+                    <a href="#">点赞 <span class="badge">{$list.views}</span></a>|
+                    <a href="#">收藏 <span class="badge">{$list.collects}</span></a>
+                </div>
+            </div>
+        </foreach>
+    </div>
+
+    <script type="text/html" id="commentBox">
+        <div class="commentArea"  style="margin:0 0 45px 0">
+            <textarea class="form-control commentContent" rows="3"></textarea>
+            <button class="btn btn-info pull-right postComment">发表评论</button>
+        </div>
+    </script>
+    <script>
+        $(document).ready(function(){
+            $('.postcomment').attr('disabled',false);
+            $('.commentBtn').click(function(){
+                var topic_id=$(this).parent().attr('topic_id');
+                addCommentBox(this,topic_id);
+            });
+        });
+        function addCommentBox(link,topic_id){
+            if($('.commentArea').html())
+            {
+                $('.commentArea').remove();
+                return;
+            }
+            var boxLocation=$(link).parents('.panel-default');
+            var commentBox=$('#commentBox').html();
+            boxLocation.after(commentBox);
+            $('.postComment').click(function(){
+                var btn=$(this);
+                var comment=$('.commentContent').val();
+                if(comment=='')
+                {
+                    alert('评论不能为空！');
+                    return;
+                }
+                postComment(btn,topic_id,comment);
+            })
+        }
+        function postComment(btn,topic_id,comment,user_id,pid){
+            pid=pid==null?0:pid;
+            user_id=66;
+            if(comment!='' && topic_id!='')
+            {
+                var data=[
+                    {
+                        topic_id:topic_id,
+                        reply_content:comment,
+                        user_id:user_id,
+                        pid:pid
+                    }
+                ];
+                data=JSON.stringify(data);
+            }
+            $.post('/Home/Weibo/addReply',data,function(msg){
+                console.log(msg);
+            });
+            return;
+            btn.attr('disabled',true);
+
+            btn.html('正在提交评论...');
+            showInfo('提交评论成功',function(){},2);
+            btn.attr('disabled',false);
+            btn.html('发表评论');
+        }
+        function gen_weibo_list(){
+            if(weibo_list!=null)
+            {
+                var tpl=$('#weibo_item').html();
+                var detail='';
+                for(var k in weibo_list)
+                {
+                    detail+=genTpl(weibo_list[k],tpl);
+                }
+            }
+            return detail;
+        }
+        function genTpl(item,tpl){
+            for(var k in item)
+            {
+                tpl=tpl.replace(new RegExp('{'+k+'}','gm'),item[k]);
+            }
+            var pattern=/{[\\w]*?}/gm;      //正则匹配 \\w，为啥少\就不行了
+            tpl=tpl.replace(pattern,'');
+            return tpl;
+        }
+    </script>
+</block>
