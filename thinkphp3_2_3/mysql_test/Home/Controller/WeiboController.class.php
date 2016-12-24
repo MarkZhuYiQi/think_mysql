@@ -11,6 +11,7 @@ use Think\Controller;
 
 class WeiboController extends Controller
 {
+    public $topic_reply=array();        //存放回复数组集合
     public function index()
     {
         $this->weibo_list=$this->showResult();
@@ -41,7 +42,61 @@ class WeiboController extends Controller
     public function addReply()
     {
         $data=json_decode(file_get_contents("php://input"));
+        $data=$data[0];
         $reply=M();
-        $reply->query('sp_topic_new_reply('.$this->reply_content.','.$this->user_id.','.$this->topic_id.','.$this->pid.')');
+        $result=$reply->query('call sp_topic_new_reply("'.$data->reply_content.'",'.$data->user_id.','.$data->topic_id.','.$data->pid.')');
+        echo $result[0]['success'];
+    }
+    public function gainReply($topic_id=1){
+        $replies=M('topic_reply');
+        $this->topic_reply=$replies->where(' topic_id = '.$topic_id)->select();
+        echo json_encode($this->_genReplyRecursion());
+//        var_export($this->_genReplyRecursion());
+
+    }
+    public function _genReplyRecursion(){
+        $replies=[];
+        //循环初始数组，取出根评论及parent_reply_id为0的元素作为根节点
+        foreach($this->topic_reply as $key => $value)
+        {
+            if($value['parent_reply_id']==0)
+            {
+                unset($this->topic_reply[$key]);
+                //将根节点内容和他的主键ID传给函数用于生成递归评论
+                $replies[]=$this->_genReplyTree($value,$value['reply_id']);
+            }
+        }
+        return $replies;
+    }
+    public function _genReplyTree($father,$father_id)
+    {
+        //获得父节点下的子节点
+        $childs=$this->_getChildReplies($father,$father_id);
+        //如果子节点获取到了，再去查看子节点下是不是还有子节点
+        if(isset($childs['child']))
+        {
+            foreach ($childs['child'] as $key=>$value)
+            {
+                $children=$this->_getChildReplies($value,$value['reply_id']);
+                if($children['child']!=null)
+                {
+                    $childs['child'][$key]['child']=$children['child'];
+                }
+            }
+        }
+        return $childs;
+    }
+    public function _getChildReplies($father,$father_id)
+    {
+        foreach($this->topic_reply as $key => $value)
+        {
+            if($value['parent_reply_id']==$father_id)
+            {
+                unset($this->topic_reply[$key]);
+                //注意这里一定要有[]，不然会覆盖上一个child
+                $father['child'][]=$value;
+            }
+        }
+        return $father;
     }
 }

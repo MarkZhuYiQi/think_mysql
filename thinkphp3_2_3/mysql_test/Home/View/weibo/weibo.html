@@ -9,38 +9,111 @@
             height:35px;
             line-height:35px;
         }
+        .weibo-footer{
+            padding:0;
+        }
         .panel-footer{
             padding:0;
         }
         .postComment{
             margin:5px 10px 0 0;
         }
+        .hr{
+
+            margin:5px auto;
+            width:95%;
+        }
+        .replyLink{
+            display:inline-block;
+            margin-left:100px;
+            background:red;
+            color:#fff;
+        }
+        .replyLink:hover{
+            text-decoration: none;
+            color:dodgerblue;
+        }
     </style>
+
+
+
+
     <div class="container weibo">
         <foreach name="weibo_list" item="list">
-            <div class="panel panel-default">
+            <div class="panel panel-info weibo_detail">
                 <div class="panel-heading">
                     <h3 class="panel-title">{$list.user_id}</h3>
                 </div>
                 <div class="panel-body">
                     {$list.topic_content}
                 </div>
-                <div class="panel-footer weibo-footer" topic_id="{$list.topic_id}" style="background:white">
-                    <a href="javascript:;" class="commentBtn">评论 <span class="badge">{$list.replies}</span></a>|
-                    <a href="#">转发 <span class="badge">{$list.repost}</span></a>|
-                    <a href="#">点赞 <span class="badge">{$list.views}</span></a>|
-                    <a href="#">收藏 <span class="badge">{$list.collects}</span></a>
-                </div>
+                <ul class="list-group">
+                    <li class="list-group-item weibo-footer" topic_id="{$list.topic_id}">
+                        <a href="javascript:;" class="commentBtn">评论 <span class="badge">{$list.replies}</span></a>|
+                        <a href="#">转发 <span class="badge">{$list.repost}</span></a>|
+                        <a href="#">点赞 <span class="badge">{$list.views}</span></a>|
+                        <a href="#">收藏 <span class="badge">{$list.collects}</span></a>
+                    </li>
+                </ul>
+                <!--<div class="panel-footer weibo-footer" topic_id="{$list.topic_id}" style="background:white">-->
+                    <!--<a href="javascript:;" class="commentBtn">评论 <span class="badge">{$list.replies}</span></a>|-->
+                    <!--<a href="#">转发 <span class="badge">{$list.repost}</span></a>|-->
+                    <!--<a href="#">点赞 <span class="badge">{$list.views}</span></a>|-->
+                    <!--<a href="#">收藏 <span class="badge">{$list.collects}</span></a>-->
+                <!--</div>-->
             </div>
         </foreach>
     </div>
 
     <script type="text/html" id="commentBox">
-        <div class="commentArea"  style="margin:0 0 45px 0">
-            <textarea class="form-control commentContent" rows="3"></textarea>
+        <div class="panel panel-default commentArea">
+            <div class="panel-body">
+                <div>
+                    <textarea class="form-control commentContent" rows="1"></textarea>
+                    <button class="btn btn-info pull-right postComment">发表评论</button>
+                </div>
+            </div>
+            <hr class="hr">
+
+            <!--评论区-->
+            <div style="padding:10px;" class="showCommentArea"></div>
+        </div>
+    </script>
+    <script type="text/html" id="replayMain">
+            <li class="media">
+                <a class="media-left" href="#">
+                    <img src="__PUBLIC__/images/example.png" alt="...">
+                </a>
+                <div class="media-body">
+                    <span style="color:coral">{reply_userid}</span><span>: </span>
+                    <span reply_id="{reply_id}" class="reply_text">{reply_content}</span>
+                    <!--<a href="#" class="replyLink">回复</a>-->
+                    {re_reply}
+                </div>
+            </li>
+    </script>
+
+    <script type="text/html" id="re_reply">
+        <div class="media">
+            <a class="media-left" href="#">
+                <img src="__PUBLIC__/images/example.png" alt="...">
+            </a>
+            <div class="media-body">
+                <span style="color:coral">{reply_userid}</span> 回复 <span style="color:coral">mark</span><span>: </span>
+                <span reply_id="{reply_id}" class="reply_text">{reply_content}</span>
+                <!--<a href="#" class="replyLink">回复</a>-->
+                {re_reply}
+            </div>
+        </div>
+    </script>
+
+    <script type="text/html" id="replyBox">
+        <div style="margin:10px 0 45px 0" class="replyBox">
+            <textarea class="form-control commentContent" rows="1"></textarea>
             <button class="btn btn-info pull-right postComment">发表评论</button>
         </div>
     </script>
+
     <script>
         $(document).ready(function(){
             $('.postcomment').attr('disabled',false);
@@ -48,28 +121,72 @@
                 var topic_id=$(this).parent().attr('topic_id');
                 addCommentBox(this,topic_id);
             });
+
+
         });
+        var replies_data='';
+        var replies_html='';
+        function getReplies_data(topic_id,action){
+            if(replies_data==''){
+                var post=function(callBack){
+                    $.post('/Home/weibo/gainReply',topic_id,function(replies){
+                        replies_data=eval('('+replies+')');
+                        callBack(action());
+                        var html=action();
+                        $('.showCommentArea').html(html);
+                        addReplyArea();
+                    });
+                };
+                post(function(html){
+                    replies_html=html;
+                })
+            }
+        }
         function addCommentBox(link,topic_id){
             if($('.commentArea').html())
             {
                 $('.commentArea').remove();
                 return;
             }
-            var boxLocation=$(link).parents('.panel-default');
+            var replies='';
+            var boxLocation=$(link).parents('.weibo_detail');
             var commentBox=$('#commentBox').html();
             boxLocation.after(commentBox);
+            if(replies_data=='')
+            {
+                getReplies_data(topic_id,genRepliesArea);
+            }
+            else
+            {
+                $('.showCommentArea').html(replies_html);
+                addReplyArea();
+            }
             $('.postComment').click(function(){
-                var btn=$(this);
-                var comment=$('.commentContent').val();
-                if(comment=='')
-                {
-                    alert('评论不能为空！');
-                    return;
-                }
-                postComment(btn,topic_id,comment);
-            })
+                postComment(this,topic_id);
+            });
         }
-        function postComment(btn,topic_id,comment,user_id,pid){
+        function addReplyArea(){
+            var reply_text=$('.reply_text');
+            for(var i=0;i<reply_text.length;i++)
+            {
+                $(reply_text[i]).click(function(){
+                    if(($(this).next().attr('class')!='replyBox')){
+                        $(this).after($('#replyBox').html());
+                    }else{
+                        $(this).next().remove();
+                    }
+                });
+            }
+        }
+        function postComment(btn,topic_id,pid,user_id){
+            var comment=$('.commentContent').val();
+            if(comment=='')
+            {
+                alert('评论不能为空！');
+                return;
+            }
+            btn.attr('disabled',true);
+            btn.html('正在提交评论...');
             pid=pid==null?0:pid;
             user_id=66;
             if(comment!='' && topic_id!='')
@@ -85,16 +202,59 @@
                 data=JSON.stringify(data);
             }
             $.post('/Home/Weibo/addReply',data,function(msg){
-                console.log(msg);
+                if(msg=='1')
+                {
+                    showInfo('提交评论成功',function(){},2);
+                    btn.attr('disabled',false);
+                    btn.html('发表评论');
+//                    $('.commentArea').remove();
+                }
             });
-            return;
-            btn.attr('disabled',true);
-
-            btn.html('正在提交评论...');
-            showInfo('提交评论成功',function(){},2);
-            btn.attr('disabled',false);
-            btn.html('发表评论');
         }
+        var temp;
+
+        var header='<ul class="media-list">';
+        var footer='</ul>';
+        var child='';
+        function genRepliesArea(){
+            var html='';
+            for(var i=0; i<replies_data.length;i++)
+            {
+                temp=genTpl(replies_data[i],$('#replayMain').html());
+                if(replies_data[i]['child']!=null&&typeof replies_data[i]['child']=='object')
+                {
+                    child=genRepliesTree(replies_data[i]['child']);
+                    temp=temp.replace(/{re_reply}/gm,child);
+                }
+                else
+                {
+                    //没人回复这个评论
+                    temp=temp.replace(/{re_reply}/gm,'');
+                }
+                html+=temp;
+            }
+            html=header+html+footer;
+            return html;
+        }
+        function genRepliesTree(item){
+            var reply_child='';
+            for(var i in item)
+            {
+                reply_child+=genTpl(item[i],$('#re_reply').html());
+                if(item[i]['child']!=null && typeof item[i]['child']=='object')
+                {
+                    reply_child=reply_child.replace(/{re_reply}/gm,genRepliesTree(item[i]['child']));
+                }else{
+                    reply_child=reply_child.replace(/{re_reply}/gm,'');
+                }
+            }
+            return reply_child;
+        }
+        function addReplyBox()
+        {
+
+        }
+
         function gen_weibo_list(){
             if(weibo_list!=null)
             {
@@ -112,8 +272,8 @@
             {
                 tpl=tpl.replace(new RegExp('{'+k+'}','gm'),item[k]);
             }
-            var pattern=/{[\\w]*?}/gm;      //正则匹配 \\w，为啥少\就不行了
-            tpl=tpl.replace(pattern,'');
+//            var pattern=/{[\\w]*?}/gm;      //正则匹配 \\w，为啥少\就不行了
+//            tpl=tpl.replace(pattern,'');
             return tpl;
         }
     </script>
