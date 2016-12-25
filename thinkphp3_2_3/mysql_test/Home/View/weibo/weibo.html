@@ -110,39 +110,37 @@
     <script type="text/html" id="replyBox">
         <div style="margin:10px 0 45px 0" class="replyBox">
             <textarea class="form-control commentContent" rows="1"></textarea>
-            <button class="btn btn-info pull-right postComment">发表评论</button>
+            <button class="btn btn-info pull-right postComment" pid="{reply_id}">发表评论</button>
         </div>
     </script>
 
     <script>
+        //这里保存上一次的话题id
+        var topic_id=-1;
         $(document).ready(function(){
             $('.postcomment').attr('disabled',false);
             $('.commentBtn').click(function(){
-                var topic_id=$(this).parent().attr('topic_id');
-                addCommentBox(this,topic_id);
+                var newTopicId=$(this).parent().attr('topic_id');
+                addCommentBox(this,newTopicId);
             });
-
-
         });
         var replies_data='';
         var replies_html='';
         function getReplies_data(topic_id,action){
-            if(replies_data==''){
-                var post=function(callBack){
-                    $.post('/Home/weibo/gainReply',topic_id,function(replies){
-                        replies_data=eval('('+replies+')');
-                        callBack(action());
-                        var html=action();
-                        $('.showCommentArea').html(html);
-                        addReplyArea();
-                    });
-                };
-                post(function(html){
-                    replies_html=html;
-                })
-            }
+            var post=function(callBack) {
+                $.post('/Home/weibo/gainReply', topic_id, function (replies) {
+                    replies_data = eval('(' + replies + ')');
+                    callBack(action());
+                    var html = action();
+                    $('.showCommentArea').html(html);
+                    addReplyArea(topic_id);
+                });
+            };
+            post(function(html){
+                replies_html=html;
+            });
         }
-        function addCommentBox(link,topic_id){
+        function addCommentBox(link,newTopicId){
             if($('.commentArea').html())
             {
                 $('.commentArea').remove();
@@ -152,34 +150,40 @@
             var boxLocation=$(link).parents('.weibo_detail');
             var commentBox=$('#commentBox').html();
             boxLocation.after(commentBox);
-            if(replies_data=='')
+            if(replies_data=='' || newTopicId!=topic_id)
             {
-                getReplies_data(topic_id,genRepliesArea);
+                getReplies_data(newTopicId,genRepliesArea);
+                topic_id=newTopicId;
             }
             else
             {
                 $('.showCommentArea').html(replies_html);
-                addReplyArea();
+                addReplyArea(topic_id);
             }
             $('.postComment').click(function(){
-                postComment(this,topic_id);
+                postComment($(this),topic_id);
             });
         }
-        function addReplyArea(){
+        function addReplyArea(topic_id){
             var reply_text=$('.reply_text');
             for(var i=0;i<reply_text.length;i++)
             {
                 $(reply_text[i]).click(function(){
                     if(($(this).next().attr('class')!='replyBox')){
                         $(this).after($('#replyBox').html());
+                        $('.postComment').attr('pid',$(this).attr('reply_id'));
+                        $('.postComment').click(function(){
+                            postComment($(this),topic_id,$(this).attr('pid'),666);
+                        });
                     }else{
                         $(this).next().remove();
                     }
                 });
             }
+
         }
         function postComment(btn,topic_id,pid,user_id){
-            var comment=$('.commentContent').val();
+            var comment=$(btn.prev()).val();
             if(comment=='')
             {
                 alert('评论不能为空！');
@@ -207,9 +211,9 @@
                     showInfo('提交评论成功',function(){},2);
                     btn.attr('disabled',false);
                     btn.html('发表评论');
-//                    $('.commentArea').remove();
                 }
             });
+            getReplies_data(topic_id,genRepliesArea);
         }
         var temp;
 

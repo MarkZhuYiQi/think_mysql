@@ -47,12 +47,13 @@ class WeiboController extends Controller
         $result=$reply->query('call sp_topic_new_reply("'.$data->reply_content.'",'.$data->user_id.','.$data->topic_id.','.$data->pid.')');
         echo $result[0]['success'];
     }
-    public function gainReply($topic_id=1){
+    public function gainReply(){
+        $topic_id=file_get_contents("php://input");
         $replies=M('topic_reply');
         $this->topic_reply=$replies->where(' topic_id = '.$topic_id)->select();
-        echo json_encode($this->_genReplyRecursion());
+//        $this->_genReplyRecursion();
 //        var_export($this->_genReplyRecursion());
-
+        echo json_encode($this->_genReplyRecursion());
     }
     public function _genReplyRecursion(){
         $replies=[];
@@ -70,6 +71,7 @@ class WeiboController extends Controller
     }
     public function _genReplyTree($father,$father_id)
     {
+//        var_export($this->topic_reply);
         //获得父节点下的子节点
         $childs=$this->_getChildReplies($father,$father_id);
         //如果子节点获取到了，再去查看子节点下是不是还有子节点
@@ -77,7 +79,9 @@ class WeiboController extends Controller
         {
             foreach ($childs['child'] as $key=>$value)
             {
-                $children=$this->_getChildReplies($value,$value['reply_id']);
+                $children=$this->_genReplyTree($value,$value['reply_id']);
+//                var_export($children['child']);
+//                var_export(PHP_EOL.'----------------'.PHP_EOL);
                 if($children['child']!=null)
                 {
                     $childs['child'][$key]['child']=$children['child'];
